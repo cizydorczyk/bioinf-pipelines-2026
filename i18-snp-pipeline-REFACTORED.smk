@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 
 ##############################################
 # Configuration validation and setup
@@ -124,6 +125,46 @@ def get_isolates_with_outgroups(isolates):
         return isolates + outgroups.split(",")
     return isolates
 
+# def isolate_matches_filename(isolate, filename):
+#     """
+#     Check if isolate name matches filename exactly (not as substring).
+#     Isolate must be followed by a delimiter: '_', '-', '.', or nothing more.
+    
+#     Examples:
+#         isolate_matches_filename("C1234_B1234", "C1234_B1234_R1.fastq.gz") -> True
+#         isolate_matches_filename("C1234_B1234", "C1234_B1234Kp_R1.fastq.gz") -> False
+#         isolate_matches_filename("C1234", "C1234.R1.fastq.gz") -> True
+#     """
+#     if isolate not in filename:
+#         return False
+    
+#     # Find where isolate appears in filename
+#     idx = filename.find(isolate)
+    
+#     # Check character immediately after isolate match
+#     char_after_idx = idx + len(isolate)
+    
+#     # If isolate is at end of filename, it's a match
+#     if char_after_idx >= len(filename):
+#         return True
+    
+#     # Check if character after isolate is a delimiter
+#     char_after = filename[char_after_idx]
+#     valid_delimiters = ['_', '-', '.']
+    
+#     return char_after in valid_delimiters
+
+def isolate_matches_filename(isolate, filename):
+    """
+    Match isolate name with regex word boundaries.
+    Isolate must be a complete token, not embedded in another word.
+    """
+    # Escape special regex characters in isolate name
+    escaped_isolate = re.escape(isolate)
+    # Pattern: isolate followed by delimiter or end of string
+    pattern = f"{escaped_isolate}(?=[_\\-\\.]|$)"
+    return re.search(pattern, filename) is not None
+
 def build_fastq_dict(isolates_all):
     """
     Build dictionary mapping isolates to their FASTQ files.
@@ -135,8 +176,14 @@ def build_fastq_dict(isolates_all):
     
     for isolate in isolates_all:
         # Find matching forward and reverse reads
-        forward = [fastq for fastq in fastq_files if isolate in fastq and fastq_endings[0] in fastq]
-        reverse = [fastq for fastq in fastq_files if isolate in fastq and fastq_endings[1] in fastq]
+        # forward = [fastq for fastq in fastq_files if isolate in fastq and fastq_endings[0] in fastq]
+        # reverse = [fastq for fastq in fastq_files if isolate in fastq and fastq_endings[1] in fastq]
+        forward = [fastq for fastq in fastq_files 
+               if isolate_matches_filename(isolate, os.path.basename(fastq)) 
+               and fastq_endings[0] in fastq]
+        reverse = [fastq for fastq in fastq_files 
+               if isolate_matches_filename(isolate, os.path.basename(fastq)) 
+               and fastq_endings[1] in fastq]
         
         # Validate files were found
         if not forward:
