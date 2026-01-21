@@ -42,11 +42,18 @@ total_threads = config.get('threads', 24)
 threads_per_snippy = config.get('threads_per_snippy', 4)
 
 # Validate threading configuration
+# if total_threads % threads_per_snippy != 0:
+#     raise ValueError(
+#         f"threads_per_snippy ({threads_per_snippy}) must evenly divide "
+#         f"total threads ({total_threads}). "
+#         f"Valid values: {[i for i in range(1, total_threads+1) if total_threads % i == 0]}"
+#     )
 if total_threads % threads_per_snippy != 0:
+    valid_values = [i for i in range(1, total_threads+1) if total_threads % i == 0]
     raise ValueError(
         f"threads_per_snippy ({threads_per_snippy}) must evenly divide "
         f"total threads ({total_threads}). "
-        f"Valid values: {[i for i in range(1, total_threads+1) if total_threads % i == 0]}"
+        f"Valid values: {valid_values}"
     )
 
 max_parallel_snippy = total_threads // threads_per_snippy
@@ -222,14 +229,14 @@ rule all:
         expand("{output}snippy-core/{st}.clean.full.aln", output=project_dir, st=st),
         #### remove_seq: ####
         expand("{output}snippy-core/{st}.{remove_seqs_flag}clean.full.aln", output=project_dir, st=st, remove_seqs_flag=remove_seqs_flag),
-        #### iqtree ####
-        expand("{output}iqtree/{st}.{remove_seqs_flag_no_dot}.contree", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot) if len(isolate_list) >= 4 else expand("{output}iqtree/{st}.{remove_seqs_flag_no_dot}.treefile", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot),
-        #### cfml ####
-        expand("{output}cfml/{st}.{remove_seqs_flag_no_dot}.labelled_tree.newick", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot),
-        #### maskrcsvg ####
-        expand("{output}cfml/{st}.rc_masked.{remove_seqs_flag_no_dot}.clean.full.aln", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot),
-        #### snpdists ####
-        expand("{output}cfml/{st}.rc_masked.{remove_seqs_flag_no_dot}.clean.full.aln.snpdists_matrix.txt", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot)
+        #### iqtree - only for >=3 isolates ####
+        expand("{output}iqtree/{st}.{remove_seqs_flag_no_dot}.contree", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot) if len(isolate_list) >= 4 else (expand("{output}iqtree/{st}.{remove_seqs_flag_no_dot}.treefile", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot) if len(isolate_list) == 3 else []),
+        #### cfml - only for >=3 isolates ####
+        expand("{output}cfml/{st}.{remove_seqs_flag_no_dot}.labelled_tree.newick", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot) if len(isolate_list) >= 3 else [],
+        #### maskrcsvg - only for >=3 isolates ####
+        expand("{output}cfml/{st}.rc_masked.{remove_seqs_flag_no_dot}.clean.full.aln", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot) if len(isolate_list) >= 3 else [],
+        #### snpdists - conditional based on isolate count ####
+        expand("{output}cfml/{st}.direct.{remove_seqs_flag_no_dot}.clean.full.aln.snpdists_matrix.txt", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot) if len(isolate_list) == 2 else expand("{output}cfml/{st}.rc_masked.{remove_seqs_flag_no_dot}.clean.full.aln.snpdists_matrix.txt", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot)
 
 # Individual target rules for partial pipeline execution
 rule run_snippy:
@@ -262,7 +269,7 @@ rule run_maskrcsvg:
 
 rule run_snpdists:
     input:
-        expand("{output}cfml/{st}.rc_masked.{remove_seqs_flag_no_dot}.clean.full.aln.snpdists_matrix.txt",output=project_dir,st=st,remove_seqs_flag_no_dot=remove_seqs_flag_no_dot)
+        expand("{output}cfml/{st}.direct.{remove_seqs_flag_no_dot}.clean.full.aln.snpdists_matrix.txt", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot) if len(isolate_list) == 2 else expand("{output}cfml/{st}.rc_masked.{remove_seqs_flag_no_dot}.clean.full.aln.snpdists_matrix.txt", output=project_dir, st=st, remove_seqs_flag_no_dot=remove_seqs_flag_no_dot)
 
 ##############################################
 # Pipeline rules
@@ -405,6 +412,7 @@ rule iqtree:
     """
     Infer maximum likelihood phylogeny with IQ-TREE.
     CRITICAL: Output extension changes based on number of isolates.
+    Only runs for >=3 isolates.
     """
     input:
         "{output}snippy-core/{st}.{remove_seqs_flag_no_dot}.clean.full.aln"
@@ -429,6 +437,7 @@ rule iqtree:
 rule clonalframeml:
     """
     Detect recombination with ClonalFrameML.
+    Only runs for >=3 isolates.
     """
     input:
         tree = "{output}iqtree/{st}.{remove_seqs_flag_no_dot}.contree" if len(isolate_list) >= 4 else "{output}iqtree/{st}.{remove_seqs_flag_no_dot}.treefile",
@@ -454,6 +463,7 @@ rule maskrcsvg:
     """
     Mask recombinant regions from alignment.
     CRITICAL: cfml_tree input forces execution order (after cfml completes).
+    Only runs for >=3 isolates.
     """
     input:
         fasta = "{output}snippy-core/{st}.{remove_seqs_flag_no_dot}.clean.full.aln",
@@ -476,9 +486,26 @@ rule maskrcsvg:
             2>&1 | tee {log}
         """
 
+rule snpdists_direct:
+    """
+    Calculate pairwise SNP distance matrix directly from cleaned alignment.
+    Used when isolate count is too low for phylogenetic analysis (2 isolates).
+    """
+    input:
+        "{output}snippy-core/{st}.{remove_seqs_flag_no_dot}.clean.full.aln"
+    output:
+        "{output}cfml/{st}.direct.{remove_seqs_flag_no_dot}.clean.full.aln.snpdists_matrix.txt"
+    log:
+        "{output}logs/snpdists-direct/{st}.{remove_seqs_flag_no_dot}.log"
+    shell:
+        """
+        snp-dists {input} > {output} 2> {log}
+        """
+
 rule snpdists:
     """
-    Calculate pairwise SNP distance matrix.
+    Calculate pairwise SNP distance matrix from recombination-masked alignment.
+    Used when isolate count allows phylogenetic analysis (>=3 isolates).
     """
     input:
         "{output}cfml/{st}.rc_masked.{remove_seqs_flag_no_dot}.clean.full.aln"
